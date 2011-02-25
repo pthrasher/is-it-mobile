@@ -30,11 +30,15 @@ class URLThread(threading.Thread):
         threading.Thread.__init__(self)
         self.urls = urls
         self.queue = queue
+        
+        # I need this so that we don't get pesky socket errors.
+        self._tsem = threading.Semaphore()
 
     def run(self):
         for row in self.urls:
             id = row[0]
             url = row[1]
+
             dRequest = urllib2.Request(url, None, {'User-Agent': self.standardUserAgent})
             dOpener = urllib2.build_opener(SmartRedirectHandler())
 
@@ -43,19 +47,25 @@ class URLThread(threading.Thread):
 
             try:
                 # timeout of 30 seconds... cuz right now it is taking for frikkin ever.
+                self._tsem.acquire()
                 dResult = dOpener.open(dRequest, None, 10)
                 mResult = mOpener.open(mRequest, None, 10)
+                self._tsem.release()
             except:
-                # ruh roh... we had an error with the url itself. Let's just return that we don't know what's up.
+                # ruh roh... site probably timed out.
+                self._tsem.release()
                 self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
                 continue
 
             hasMobile = True
             try:
+                self._tsem.acquire()
                 if dResult.read() == mResult.read():
                     hasMobile = False
+                self._tsem.release()
             except:
                 # hrmm... not sure what has happened... probably socket timeout.
+                self._tsem.release()
                 self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
                 continue
 
@@ -69,7 +79,6 @@ class URLThread(threading.Thread):
             except AttributeError:
                 # only 301's and 302's get proper status codes back.
                 status = '200'
-            
             
             self.queue.put(dict(id=id, url=url, hasMobile=hasMobile, location=location, redirected=redirected, status=status))
 
