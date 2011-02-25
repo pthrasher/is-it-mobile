@@ -126,18 +126,24 @@ def main(argv=None):
 
 
         #start of real codez
-
+        if fetch:
+            print "Getting fresh copy of data... Could take a while."
+            webFile = urllib.urlopen('http://s3.amazonaws.com/alexa-static/top-1m.csv.zip')
+            print "Got zip, extracting..."
+            localZip = zipfile.ZipFile(webFile)
+            csvreader = csv.read(localZip.open('top-1m.csv'))
+            print "Done."
+        else:
+            csvreader = csv.reader(open(inputFile, 'rb'))
 
         # get urls to test from input file
-        alexaTopMillion = csv.reader(open(inputFile, 'rb'))
         count = 0
         urls = []
-        for row in alexaTopMillion:
+        for row in csvreader:
             urls.append([row[0], fixAlexaFail(row[1])])
             count += 1
             if count == numhosts:
                 break
-        
         
         # call sub threads breaking up list for each
         threads = min([threads, len(urls)])
