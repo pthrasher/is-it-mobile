@@ -5,16 +5,12 @@ import sys, os, urllib2, csv, json
 # change this to how many IP's you want to test. cannot be greater than 1 million.
 IPS_TO_TEST = 1000
 
-
-def yesno(test):
-    if test:
-        return 'yes'
-    return 'no'
-
 def fixAlexaFail(url):
     if 'http://' not in url:
         return "http://%s/" % (url)
 
+
+# urllib2 redirection is traditionally silent. --we need this to grab the status code.
 class SmartRedirectHandler(urllib2.HTTPRedirectHandler):     
     def http_error_301(self, req, fp, code, msg, headers):  
         result = urllib2.HTTPRedirectHandler.http_error_301(self, req, fp, code, msg, headers)              
@@ -59,6 +55,7 @@ class URLHandler():
                 location = mResult.url
                 status = mResult.status
             except AttributeError:
+                # only 301's and 302's get proper status codes back.
                 status = '200'
                 
 
@@ -81,6 +78,8 @@ if __name__ == '__main__':
     results = []
     for answer in urlh.checkurlList():
         results.append(answer)
-        print "%s\n\t%s - %s\n" % (answer['url'], yesno(answer['hasMobile']), answer['status'] if answer['location'] == answer['url'] else "%s -> %s" % (answer['status'], answer['location'],))
+        print "%s\n\t%s - %s\n" % (answer['url'],
+            'yes' if answer['hasMobile'] else 'no',
+            answer['status'] if answer['location'] == answer['url'] else "%s -> %s" % (answer['status'], answer['location'],))
     out = open('results.out', 'w')
     out.write(json.dumps(results))
