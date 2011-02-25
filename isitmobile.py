@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, os, urllib2, csv, json, threading, Queue, time
+import sys, os, urllib2, csv, json, threading, Queue, time, getopt, urllib, zipfile, cStringIO
 
 #global for all threads to use.
 queue = Queue.Queue()
@@ -47,12 +47,17 @@ class URLThread(threading.Thread):
                 mResult = mOpener.open(mRequest, None, 10)
             except:
                 # ruh roh... we had an error with the url itself. Let's just return that we don't know what's up.
-                self.queue.put((dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
+                self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
                 continue
 
             hasMobile = True
-            if dResult.read() == mResult.read():
-                hasMobile = False
+            try:
+                if dResult.read() == mResult.read():
+                    hasMobile = False
+            except:
+                # hrmm... not sure what has happened... probably socket timeout.
+                self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
+                continue
 
             location = url
             try:
@@ -72,14 +77,14 @@ class URLThread(threading.Thread):
 
 help_message = '''
 This script tests whether or not sites have a mobile version
-    -h / --help     show this text
-    -q / --quiet    don't print to console
-    -o / --output=  File you want the output data to go (default: results.out)
-    -t / --type=    Putput data type (csv, json - default: json)
-    -f / --fetch    Fetch new list
-    -i / --input=   Specify a different input filename (default: top-1m.csv)
-    -n / --numhosts=  Number of top hosts's to test. (default: 1000)
-    -T / --threads= Specify number of worker threads to spawn (default: 10)
+    -h / --help         show this text
+    -q / --quiet        don't print to console
+    -o / --output=      File you want the output data to go (default: results.out)
+    -t / --type=        Putput data type (csv, json - default: json)
+    -f / --fetch        Fetch new list of top 1 million from alexa.com
+    -i / --input=       Specify a different input filename (default: top-1m.csv)
+    -n / --numhosts=    Number of top hosts's to test. (default: 1000)
+    -T / --threads=     Specify number of worker threads to spawn (default: 10)
 '''
 
 
@@ -126,13 +131,20 @@ def main(argv=None):
 
 
         #start of real codez
-        if fetch:
+        if fetch or not os.path.exists(inputFile):
             print "Getting fresh copy of data... Could take a while."
             webFile = urllib.urlopen('http://s3.amazonaws.com/alexa-static/top-1m.csv.zip')
+            remoteZip = cStringIO.StringIO(webFile.read())
             print "Got zip, extracting..."
-            localZip = zipfile.ZipFile(webFile)
-            csvreader = csv.read(localZip.open('top-1m.csv'))
+            localZip = zipfile.ZipFile(remoteZip)
+            if not fetch:
+                # they didn't ask you to fetch new data, save what you got!
+                cachedFile = open(inputFile, 'w')
+                cachedFile.write(localZip.open('top-1m.csv').read())
+                cachedFile.close()
+            csvreader = csv.reader(localZip.open('top-1m.csv'))
             print "Done."
+            inputFile = 'fresh data'
         else:
             csvreader = csv.reader(open(inputFile, 'rb'))
 
@@ -148,47 +160,52 @@ def main(argv=None):
         # call sub threads breaking up list for each
         threads = min([threads, len(urls)])
         start = time.time()
-        print """Started testing urls at %s
-This determines whether or not a domain
+        print """This determines whether or not a domain
 has a mobile version.
 
 Threads: %d
 Input: %s
 Output: %s
 Quantity: %d
-""" % (start, threads, inputFile, output, len(urls),)
+""" % (threads, inputFile, output, len(urls),)
         myThreads = []
         section_amount = len(urls)/threads
+        remainder = len(urls) - (section_amount*threads)
+        print "Ramping up..."
         for i in range(threads):
-            t = URLThread(urls[threads*section_amount:threads*section_amount+section_amount], queue,)
+            t = URLThread(urls[i*section_amount:i*section_amount+section_amount], queue,)
+            myThreads.append(t)
             t.setDaemon(True)
-            t.run()
-            t.append(myThread)
-        
+            t.start()
+        if remainder > 0:
+            t = URLThread(urls[section_amount*threads+1:], queue,)
+            myThreads.append(t)
+            t.setDaemon(True)
+            t.start()
+        print "All Threads running."
         results = []
         
-        while len(results) < numhosts:
-            if not queue.empty():
-            result = queue.get()
-            results.append(result)
-            if not quiet:
-                print "%s\n\t%s - %s\n" % (result['url'],
-                    'yes' if result['hasMobile'] else 'no',
-                    result['status'] if result['location'] == result['url'] else "%s -> %s" % (result['status'], result['location'],))
-            queue.task_done()
-            time.sleep(1)
+        while len(results) < numhosts or not threading.activeCount():
+            try:
+                result = queue.get_nowait()
+                results.append(result)
+                if not quiet:
+                    print "%s\n\t%s - %s\n" % (result['url'],
+                        'yes' if result['hasMobile'] else 'no',
+                        result['status'] if result['location'] == result['url'] else "%s -> %s" % (result['status'], result['location'],))
+                queue.task_done()
+            except Queue.Empty:
+                pass
         
-        # well, we have enough data, let's just make sure all the threads are dead.
-        for t in myThreads:
-            t.stop()
-        print "Elapsed Time: %s" % (time.time() - start)
+
+        print "Elapsed Time: %s" % (time.strftime('%H:%M:%S', time.gmtime(time.time() - start)))
         # sort through the results, put them back in order, and write them to a file.
         if outType == 'json':
             out = open(output, 'w') 
             out.write(json.dumps(sorted(results, key=lambda k: k['id'])))            
             return 0
         writer = csv.DictWriter(open(output, 'w'))
-        writer.writerows(sorted(results, key=lambda k: k['id']))
+        writer.writerows(sorted(results, key=lambda k: int(k['id'])))
         return 0
 
     except Usage, err:
