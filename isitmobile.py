@@ -136,7 +136,7 @@ def main(argv=None):
             if option in ("-n", "--numhosts"):
                 numhosts = int(value) if int(value) < 1000001 else 1000000
             if option in ("-T", "--threads"):
-                threads = value
+                threads = int(value)
 
 
         #start of real codez
