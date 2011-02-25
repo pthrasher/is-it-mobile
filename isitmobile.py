@@ -85,7 +85,7 @@ help_message = '''
 This script tests whether or not sites have a mobile version
     -h / --help         show this text
     -q / --quiet        don't print to console
-    -o / --output=      File you want the output data to go (default: results.out)
+    -o / --output=      File you want the output data to go (default: results.csv)
     -t / --type=        Putput data type (csv, json - default: csv)
     -f / --fetch        Fetch new list of top 1 million from alexa.com
     -i / --input=       Specify a different input filename (default: top-1m.csv)
