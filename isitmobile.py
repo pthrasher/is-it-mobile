@@ -1,15 +1,12 @@
 #!/usr/bin/env python
-
 import sys, os, urllib2, csv, json, threading, Queue, time, getopt, urllib, zipfile, cStringIO
 
 #global for all threads to use.
 queue = Queue.Queue()
 
-
 def fixAlexaFail(url):
     if 'http://' not in url:
         return "http://%s/" % (url)
-
 
 # urllib2 redirection is traditionally silent. --we need this to grab the status code.
 class SmartRedirectHandler(urllib2.HTTPRedirectHandler):     
@@ -72,13 +69,13 @@ class URLThread(threading.Thread):
             location = url
             try:
                 redirected = False
-                if mResult.status in ['301', '302']:
+                if mResult.status in [301, 302]:
                     redirected = True
                 location = mResult.url
                 status = mResult.status
             except AttributeError:
                 # only 301's and 302's get proper status codes back.
-                status = '200'
+                status = 200
             
             self.queue.put(dict(id=id, url=url, hasMobile=hasMobile, location=location, redirected=redirected, status=status))
 
@@ -89,7 +86,7 @@ This script tests whether or not sites have a mobile version
     -h / --help         show this text
     -q / --quiet        don't print to console
     -o / --output=      File you want the output data to go (default: results.out)
-    -t / --type=        Putput data type (csv, json - default: json)
+    -t / --type=        Putput data type (csv, json - default: csv)
     -f / --fetch        Fetch new list of top 1 million from alexa.com
     -i / --input=       Specify a different input filename (default: top-1m.csv)
     -n / --numhosts=    Number of top hosts's to test. (default: 1000)
@@ -111,8 +108,8 @@ def main(argv=None):
         except getopt.error, msg:
             raise Usage(msg)
         quiet = False
-        output = 'results.out'
-        outType = 'json'
+        output = 'results.csv'
+        outType = 'csv'
         fetch = False
         inputFile = 'top-1m.csv'
         numhosts = 1000
@@ -177,24 +174,16 @@ Input: %s
 Output: %s
 Quantity: %d
 """ % (threads, inputFile, output, len(urls),)
-        myThreads = []
-        section_amount = len(urls)/threads
-        remainder = len(urls) - (section_amount*threads)
-        print "Ramping up..."
-        for i in range(threads):
-            t = URLThread(urls[i*section_amount:i*section_amount+section_amount], queue,)
-            myThreads.append(t)
-            t.setDaemon(True)
-            t.start()
-        if remainder > 0:
-            t = URLThread(urls[section_amount*threads+1:], queue,)
-            myThreads.append(t)
-            t.setDaemon(True)
-            t.start()
-        print "All Threads running."
+
+        currentIndex = 0
         results = []
         
-        while len(results) < numhosts or not threading.activeCount():
+        while len(results) < numhosts:
+            while threading.activeCount() < threads and currentIndex < len(urls):
+                t = URLThread([urls[currentIndex]], queue,)
+                t.setDaemon(True)
+                t.start()
+                currentIndex += 1
             try:
                 result = queue.get_nowait()
                 results.append(result)
@@ -211,10 +200,19 @@ Quantity: %d
         # sort through the results, put them back in order, and write them to a file.
         if outType == 'json':
             out = open(output, 'w') 
-            out.write(json.dumps(sorted(results, key=lambda k: k['id'])))            
+            out.write(json.dumps(sorted(results, key=lambda k: int(k['id']))))            
             return 0
-        writer = csv.DictWriter(open(output, 'w'))
-        writer.writerows(sorted(results, key=lambda k: int(k['id'])))
+        # dict(id=id, url=url, hasMobile=hasMobile, location=location, redirected=redirected, status=status)
+        writer = csv.DictWriter(open(output, 'w'), ['id', 'url', 'hasMobile', 'location', 'redirected', 'status'])
+        writer.writerow(dict([['id','Rank'], ['url','URL'], ['hasMobile','Has Mobile Version'], ['location','Redirected to'], ['redirected','Were we redirected',], ['status','HTTP Status Code'],]))
+        for row in sorted(results, key=lambda k: int(k['id'])):
+            hasMobile = row['hasMobile']
+            redirected = row['redirected']
+            row['hasMobile'] = 'yes' if hasMobile else 'no'
+            row['location'] = row['location'] if redirected else ''
+            row['redirected'] = 'yes' if redirected else 'no'
+            writer.writerow(row)
+
         return 0
 
     except Usage, err:
