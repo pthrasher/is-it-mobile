@@ -20,36 +20,6 @@ class SmartRedirectHandler(urllib2.HTTPRedirectHandler):
         result.status = code
         return result
 
-    def http_error_404(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_404(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-        
-    def http_error_401(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_401(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-
-    def http_error_400(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_400(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-
-    def http_error_403(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_403(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-
-    def http_error_200(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_200(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-        
-    def http_error_500(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_500(self, req, fp, code, msg, headers)
-        result.status = code
-        return result
-
 
 class URLThread(threading.Thread):
     standardUserAgent = 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; en-US) AppleWebKit/534.13 (KHTML, like Gecko) Chrome/9.0.597.102 Safari/534.13'
