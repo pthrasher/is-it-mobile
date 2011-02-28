@@ -10,15 +10,46 @@ def fixAlexaFail(url):
 
 # urllib2 redirection is traditionally silent. --we need this to grab the status code.
 class SmartRedirectHandler(urllib2.HTTPRedirectHandler):     
-    def http_error_301(self, req, fp, code, msg, headers):  
-        result = urllib2.HTTPRedirectHandler.http_error_301(self, req, fp, code, msg, headers)              
-        result.status = code                                 
-        return result                                       
+    def http_error_301(self, req, fp, code, msg, headers):
+        result = urllib2.HTTPRedirectHandler.http_error_301(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
 
     def http_error_302(self, req, fp, code, msg, headers):   
-        result = urllib2.HTTPRedirectHandler.http_error_302(self, req, fp, code, msg, headers)              
-        result.status = code                                
+        result = urllib2.HTTPRedirectHandler.http_error_302(self, req, fp, code, msg, headers)
+        result.status = code
         return result
+
+    def http_error_404(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_404(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+        
+    def http_error_401(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_401(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+
+    def http_error_400(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_400(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+
+    def http_error_403(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_403(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+
+    def http_error_200(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_200(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+        
+    def http_error_500(self, req, fp, code, msg, headers):   
+        result = urllib2.HTTPRedirectHandler.http_error_500(self, req, fp, code, msg, headers)
+        result.status = code
+        return result
+
 
 class URLThread(threading.Thread):
     standardUserAgent = 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_6; en-US) AppleWebKit/534.13 (KHTML, like Gecko) Chrome/9.0.597.102 Safari/534.13'
@@ -28,8 +59,6 @@ class URLThread(threading.Thread):
         self.urls = urls
         self.queue = queue
         
-        # I need this so that we don't get pesky socket errors.
-        self._tsem = threading.Semaphore()
 
     def run(self):
         for row in self.urls:
@@ -43,27 +72,21 @@ class URLThread(threading.Thread):
             mOpener = urllib2.build_opener(SmartRedirectHandler())
 
             try:
-                # timeout of 30 seconds... cuz right now it is taking for frikkin ever.
-                self._tsem.acquire()
+                # timeout of 10 seconds... cuz right now it is taking for frikkin ever.
                 dResult = dOpener.open(dRequest, None, 10)
                 mResult = mOpener.open(mRequest, None, 10)
-                self._tsem.release()
             except:
                 # ruh roh... site probably timed out.
-                self._tsem.release()
-                self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
+                self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error: Timed out', redirected=False, status='Error: Timed out'))
                 continue
 
             hasMobile = True
             try:
-                self._tsem.acquire()
                 if dResult.read() == mResult.read():
                     hasMobile = False
-                self._tsem.release()
             except:
                 # hrmm... not sure what has happened... probably socket timeout.
-                self._tsem.release()
-                self.queue.put(dict(id=id, url=url, hasMobile=False, location='Error', redirected=False, status='Error'))
+                self.queue.put(dict(id=id, url=url, hasMobile=False, location="Error: Couldn't connect", redirected=False, status="Error: Couldn't connect"))
                 continue
 
             location = url
@@ -97,6 +120,59 @@ This script tests whether or not sites have a mobile version
 class Usage(Exception):
     def __init__(self, msg):
         self.msg = msg
+
+def getUrls(inputFile, fetch, numhosts):
+    if fetch or not os.path.exists(inputFile):
+        print "Getting fresh copy of data... Could take a while."
+        webFile = urllib.urlopen('http://s3.amazonaws.com/alexa-static/top-1m.csv.zip')
+        remoteZip = cStringIO.StringIO(webFile.read())
+        print "Got zip, extracting..."
+        localZip = zipfile.ZipFile(remoteZip)
+        if not fetch:
+            # they didn't ask you to fetch new data, save what you got!
+            cachedFile = open(inputFile, 'w')
+            cachedFile.write(localZip.open('top-1m.csv').read())
+            cachedFile.close()
+        csvreader = csv.reader(localZip.open('top-1m.csv'))
+        print "Done."
+        inputFile = 'fresh data'
+    else:
+        csvreader = csv.reader(open(inputFile, 'rb'))
+    
+    count = 0
+    urls = []
+    for row in csvreader:
+        urls.append([row[0], fixAlexaFail(row[1])])
+        count += 1
+        if count == numhosts:
+            break
+    return urls
+    
+def doWork(urls, numhosts, threads, quiet, checkError=True):
+    currentIndex = 0
+    results = []
+    errors = []
+    
+    while (checkError and len(results) + len(errors) < numhosts) or (not checkError and len(results) < numhosts):
+        while threading.activeCount() < threads and currentIndex < len(urls):
+            t = URLThread([urls[currentIndex]], queue,)
+            t.setDaemon(True)
+            t.start()
+            currentIndex += 1
+        try:
+            result = queue.get_nowait()
+            if 'Error' in result['location'] and checkError:
+                errors.append([result['id'], result['url']])
+            else:
+                results.append(result)
+            if not quiet:
+                print "%s\n\t%s - %s\n" % (result['url'],
+                    'yes' if result['hasMobile'] else 'no',
+                    result['status'] if result['location'] == result['url'] else "%s -> %s" % (result['status'], result['location'],))
+            queue.task_done()
+        except Queue.Empty:
+            pass
+    return (results, errors,)
 
 
 def main(argv=None):
@@ -134,36 +210,11 @@ def main(argv=None):
                 numhosts = int(value) if int(value) < 1000001 else 1000000
             if option in ("-T", "--threads"):
                 threads = int(value)
-
-
-        #start of real codez
-        if fetch or not os.path.exists(inputFile):
-            print "Getting fresh copy of data... Could take a while."
-            webFile = urllib.urlopen('http://s3.amazonaws.com/alexa-static/top-1m.csv.zip')
-            remoteZip = cStringIO.StringIO(webFile.read())
-            print "Got zip, extracting..."
-            localZip = zipfile.ZipFile(remoteZip)
-            if not fetch:
-                # they didn't ask you to fetch new data, save what you got!
-                cachedFile = open(inputFile, 'w')
-                cachedFile.write(localZip.open('top-1m.csv').read())
-                cachedFile.close()
-            csvreader = csv.reader(localZip.open('top-1m.csv'))
-            print "Done."
-            inputFile = 'fresh data'
-        else:
-            csvreader = csv.reader(open(inputFile, 'rb'))
+        
 
         # get urls to test from input file
-        count = 0
-        urls = []
-        for row in csvreader:
-            urls.append([row[0], fixAlexaFail(row[1])])
-            count += 1
-            if count == numhosts:
-                break
+        urls = getUrls(inputFile, fetch, numhosts)
         
-        # call sub threads breaking up list for each
         threads = min([threads, len(urls)])
         start = time.time()
         print """This determines whether or not a domain
@@ -175,26 +226,17 @@ Output: %s
 Quantity: %d
 """ % (threads, inputFile, output, len(urls),)
 
-        currentIndex = 0
-        results = []
+        results, errors = doWork(urls, numhosts, threads, quiet)
         
-        while len(results) < numhosts:
-            while threading.activeCount() < threads and currentIndex < len(urls):
-                t = URLThread([urls[currentIndex]], queue,)
-                t.setDaemon(True)
-                t.start()
-                currentIndex += 1
-            try:
-                result = queue.get_nowait()
-                results.append(result)
-                if not quiet:
-                    print "%s\n\t%s - %s\n" % (result['url'],
-                        'yes' if result['hasMobile'] else 'no',
-                        result['status'] if result['location'] == result['url'] else "%s -> %s" % (result['status'], result['location'],))
-                queue.task_done()
-            except Queue.Empty:
-                pass
-        
+        if len(errors):
+            print """There were %d urls that for whatever reason returned an error.
+I can retry these if you like, and if not, they'll be excluded from the final results.""" % len(errors)
+            if raw_input("Retry? [y]/[n] ").lower() in ('y', 'yes',):
+                print "Retrying the bad ones.\n"
+                results1, errors1 = doWork(errors, len(errors), threads, quiet, checkError=False)
+                for row in results1:
+                    results.append(row)
+                
 
         print "Elapsed Time: %s" % (time.strftime('%H:%M:%S', time.gmtime(time.time() - start)))
         # sort through the results, put them back in order, and write them to a file.
